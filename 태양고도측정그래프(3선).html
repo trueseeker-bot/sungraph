@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>하루 동안의 변화 통합 그래프</title>
+
+  <!-- Chart.js 최신 버전 (CDN) -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <style>
+    /* ===== 기본 리셋 & 변수 ===== */
+    :root {
+      --bg: #f4f6fb;
+      --card: #ffffff;
+      --border: #e3e8f0;
+      --text: #1f2937;
+      --muted: #6b7280;
+      --red: #e53935;
+      --green: #2e9e4f;
+      --blue: #1e6fe0;
+      --radius: 14px;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: "Pretendard", "Noto Sans KR", -apple-system, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      height: 100vh;
+      padding: 20px;
+    }
+
+    /* ===== Split View: 좌 30% / 우 70% ===== */
+    .app {
+      display: grid;
+      grid-template-columns: 3fr 7fr;
+      gap: 20px;
+      height: 100%;
+    }
+
+    .panel {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: 0 4px 16px rgba(20, 30, 60, 0.06);
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      min-height: 0;
+    }
+
+    .panel h2 {
+      font-size: 17px;
+      margin-bottom: 4px;
+    }
+    .panel .desc {
+      font-size: 12.5px;
+      color: var(--muted);
+      margin-bottom: 14px;
+    }
+
+    /* ===== 테이블 ===== */
+    .table-wrap { overflow: auto; }
+
+    table {
+      width: 100%;
+      border-collapse: separate;
+      border-spacing: 0;
+      font-size: 13px;
+    }
+    thead th {
+      position: sticky;
+      top: 0;
+      background: #f0f3fa;
+      padding: 10px 6px;
+      font-weight: 600;
+      font-size: 12.5px;
+      border-bottom: 2px solid var(--border);
+      white-space: nowrap;
+    }
+    thead th:nth-child(2) { color: var(--red); }
+    thead th:nth-child(3) { color: var(--green); }
+    thead th:nth-child(4) { color: var(--blue); }
+
+    tbody td {
+      padding: 4px;
+      border-bottom: 1px solid var(--border);
+    }
+    tbody tr:hover { background: #f8faff; }
+
+    table input {
+      width: 100%;
+      padding: 8px 6px;
+      border: 1px solid transparent;
+      border-radius: 8px;
+      background: transparent;
+      font-size: 13px;
+      text-align: center;
+      color: var(--text);
+      transition: border-color .15s, background .15s, box-shadow .15s;
+    }
+    table input:hover { background: #f1f5fd; }
+    table input:focus {
+      outline: none;
+      background: #fff;
+      border-color: #7aa7f5;
+      box-shadow: 0 0 0 3px rgba(30, 111, 224, 0.15);
+    }
+    /* 잘못된 값(숫자가 아님) 표시 */
+    table input.invalid {
+      border-color: #f28b82;
+      background: #fff4f3;
+    }
+
+    .hint {
+      margin-top: 12px;
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+
+    /* ===== 차트 영역 ===== */
+    .chart-box {
+      position: relative;
+      flex: 1;
+      min-height: 0;
+    }
+
+    /* 좁은 화면에서는 위아래로 배치 */
+    @media (max-width: 900px) {
+      body { height: auto; }
+      .app { grid-template-columns: 1fr; height: auto; }
+      .chart-box { height: 480px; flex: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+
+    <!-- ========== 좌측: 데이터 입력 테이블 ========== -->
+    <section class="panel">
+      <h2>📋 측정 데이터</h2>
+      <p class="desc">값을 수정하면 그래프가 실시간으로 바뀝니다.</p>
+
+      <div class="table-wrap">
+        <table id="data-table">
+          <thead>
+            <tr>
+              <th>측정 시각</th>
+              <th>태양 고도(°)</th>
+              <th>그림자 길이(cm)</th>
+              <th>기온(°C)</th>
+            </tr>
+          </thead>
+          <tbody id="table-body">
+            <!-- 행은 JavaScript가 초기 데이터로 생성합니다 -->
+          </tbody>
+        </table>
+      </div>
+
+      <p class="hint">
+        ※ 시각은 텍스트, 나머지는 숫자만 입력하세요.<br />
+        비어 있거나 숫자가 아닌 값은 그래프에서 건너뜁니다.
+      </p>
+    </section>
+
+    <!-- ========== 우측: 동적 그래프 ========== -->
+    <section class="panel">
+      <div class="chart-box">
+        <canvas id="myChart"></canvas>
+      </div>
+    </section>
+
+  </div>
+
+  <script>
+    /* =====================================================
+       1) 초기 데이터
+       (요청하신 목록의 7개 행을 모두 포함했습니다)
+       ===================================================== */
+    const initialData = [
+      { time: "9:30",  sun: 34, shadow: 14, temp: 21 },
+      { time: "10:30", sun: 43, shadow: 10, temp: 23 },
+      { time: "11:30", sun: 49, shadow: 8,  temp: 24 },
+      { time: "12:30", sun: 51, shadow: 7,  temp: 26 },
+      { time: "13:30", sun: 48, shadow: 8,  temp: 26 },
+      { time: "14:30", sun: 42, shadow: 11, temp: 27 },
+      { time: "15:30", sun: 32, shadow: 15, temp: 26 }
+    ];
+
+    /* 그래프에 사용할 배열들 (테이블 값에서 읽어 채움) */
+    let labels = [];
+    let sunData = [];
+    let shadowData = [];
+    let tempData = [];
+
+    const tbody = document.getElementById("table-body");
+
+    /* =====================================================
+       2) 테이블 생성: 초기 데이터로 <input> 행 만들기
+       ===================================================== */
+    function buildTable() {
+      initialData.forEach(row => {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td><input type="text"   data-col="time"    value="${row.time}"    placeholder="시:분" /></td>
+          <td><input type="number" data-col="sun"     value="${row.sun}"     step="any" /></td>
+          <td><input type="number" data-col="shadow"  value="${row.shadow}"  step="any" /></td>
+          <td><input type="number" data-col="temp"    value="${row.temp}"    step="any" /></td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    /* =====================================================
+       3) 숫자 변환 + 예외 처리
+       - 빈 값, 숫자가 아닌 값 → null (그래프에서 빈 점으로 처리)
+       - 값이 잘못되면 입력칸에 붉은 테두리 표시
+       ===================================================== */
+    function parseNumber(input) {
+      const raw = input.value.trim();
+
+      // type="number" 입력칸에 문자가 들어가면 value가 ""가 되고 badInput이 true
+      const isBad = input.validity && input.validity.badInput;
+
+      if (raw === "" && !isBad) {
+        input.classList.remove("invalid");   // 단순히 비어있는 경우: 오류 표시는 안 함
+        return null;
+      }
+
+      const num = Number(raw);
+      if (isBad || !Number.isFinite(num)) {
+        input.classList.add("invalid");      // 숫자가 아님 → 경고 표시
+        return null;
+      }
+
+      input.classList.remove("invalid");
+      return num;
+    }
+
+    /* =====================================================
+       4) 테이블 → 배열 읽기
+       ===================================================== */
+    function readTable() {
+      labels = [];
+      sunData = [];
+      shadowData = [];
+      tempData = [];
+
+      tbody.querySelectorAll("tr").forEach(tr => {
+        const inputs = tr.querySelectorAll("input");
+        // 시각: 비어 있으면 빈 문자열로 처리
+        labels.push(inputs[0].value.trim());
+        sunData.push(parseNumber(inputs[1]));
+        shadowData.push(parseNumber(inputs[2]));
+        tempData.push(parseNumber(inputs[3]));
+      });
+    }
+
+    /* =====================================================
+       5) Chart.js 설정
+       ===================================================== */
+    // 공통 데이터셋 스타일: 두꺼운 실선 + 포인트 마커
+    function makeDataset(label, color, yAxisID) {
+      return {
+        label: label,
+        data: [],
+        borderColor: color,
+        backgroundColor: color,
+        borderWidth: 3.5,          // 두꺼운 실선
+        pointRadius: 5,            // 포인트 마커
+        pointHoverRadius: 7,
+        pointBackgroundColor: "#fff",
+        pointBorderColor: color,
+        pointBorderWidth: 2.5,
+        tension: 0,                // 직선(꺾은선)
+        spanGaps: true,            // 값이 비어 있으면 앞뒤 점을 이어줌
+        yAxisID: yAxisID
+      };
+    }
+
+    // Y축 공통 옵션 생성 함수
+    function makeYAxis(title, color, position, drawGrid) {
+      return {
+        type: "linear",
+        position: position,
+        title: { display: true, text: title, color: color, font: { weight: "bold", size: 13 } },
+        ticks: { color: color },
+        border: { color: color, width: 2 },
+        grid: {
+          drawOnChartArea: drawGrid,   // 격자선은 첫 번째 축만 그림 (겹침 방지)
+          color: "rgba(0,0,0,0.06)"
+        }
+      };
+    }
+
+    let chart; // 전역 차트 객체
+
+    function createChart() {
+      const ctx = document.getElementById("myChart").getContext("2d");
+
+      chart = new Chart(ctx, {
+        type: "line",
+        data: {
+          labels: labels,
+          datasets: [
+            makeDataset("태양 고도(°)",   "#e53935", "y"),    // Y축 1 (왼쪽)
+            makeDataset("그림자 길이(cm)", "#2e9e4f", "y1"),   // Y축 2 (오른쪽 안쪽)
+            makeDataset("기온(°C)",       "#1e6fe0", "y2")     // Y축 3 (오른쪽 바깥쪽)
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          interaction: { mode: "index", intersect: false },
+          plugins: {
+            title: {
+              display: true,
+              text: "하루 동안의 변화 통합 그래프",
+              font: { size: 20, weight: "bold" },
+              color: "#1f2937",
+              padding: { bottom: 16 }
+            },
+            legend: {
+              position: "bottom",            // 범례: 하단
+              labels: { usePointStyle: true, padding: 18, font: { size: 13 } }
+            }
+          },
+          scales: {
+            x: {
+              title: { display: true, text: "측정 시각 (시:분)", font: { weight: "bold", size: 13 } },
+              grid: { color: "rgba(0,0,0,0.05)" }
+            },
+            // 같은 쪽(right)에 두 축을 두면 선언 순서대로 안쪽 → 바깥쪽으로 배치됨
+            y:  makeYAxis("태양 고도(°)",   "#e53935", "left",  true),
+            y1: makeYAxis("그림자 길이(cm)", "#2e9e4f", "right", false),
+            y2: makeYAxis("기온(°C)",       "#1e6fe0", "right", false)
+          }
+        }
+      });
+    }
+
+    /* =====================================================
+       6) 그래프 갱신: 테이블을 읽고 chart.update() 호출
+       ===================================================== */
+    function updateChart() {
+      readTable();
+
+      chart.data.labels = labels;
+      chart.data.datasets[0].data = sunData;
+      chart.data.datasets[1].data = shadowData;
+      chart.data.datasets[2].data = tempData;
+
+      chart.update();
+    }
+
+    /* =====================================================
+       7) 초기화 & 이벤트 연결
+       ===================================================== */
+    buildTable();      // 테이블 생성
+    readTable();       // 초기 데이터 읽기
+    createChart();     // 그래프 최초 렌더링
+    updateChart();     // 데이터 반영
+
+    // 이벤트 위임: 테이블 안의 어떤 input이든 값이 바뀌면 즉시 그래프 갱신
+    tbody.addEventListener("input", updateChart);
+    tbody.addEventListener("change", updateChart);
+  </script>
+</body>
+</html>
